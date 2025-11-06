@@ -1,0 +1,22 @@
+runtime: nodejs18
+
+env_variables:
+  NODE_ENV: production
+
+handlers:
+- url: /proxy
+  script: auto
+  
+- url: /health
+  script: auto
+  
+- url: /info
+  script: auto
+  
+- url: /.*
+  static_files: public/index.html
+  upload: public/index.html
+
+network:
+  forwarded_ports:
+    - 3000

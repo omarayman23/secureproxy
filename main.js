@@ -16,6 +16,9 @@ class SecureProxy {
         this.connectionChart = null;
         this.privacyChart = null;
         
+        // Backend URL - update this if your server IP changes
+        this.backendUrl = 'http://35.196.124.59:3000';
+        
         this.init();
     }
     
@@ -26,6 +29,20 @@ class SecureProxy {
         this.startConnectionMonitoring();
         this.initializeAnimations();
         this.setupQuickAccessCarousel();
+        this.checkBackendHealth();
+    }
+    
+    async checkBackendHealth() {
+        try {
+            const response = await fetch(`${this.backendUrl}/health`);
+            const data = await response.json();
+            console.log('✅ Backend is healthy:', data);
+            this.updateConnectionStatus('connected');
+        } catch (error) {
+            console.error('❌ Backend health check failed:', error);
+            this.showAlert('Warning: Cannot connect to proxy server. Please check if the backend is running.', 'warning');
+            this.updateConnectionStatus('disconnected');
+        }
     }
     
     setupEventListeners() {
@@ -71,12 +88,6 @@ class SecureProxy {
                 this.toggleSetting(setting, toggle);
             });
         });
-        
-        // Action Buttons
-        const saveBtn = document.querySelector('button:contains("Save Settings")');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', () => this.saveSettings());
-        }
     }
     
     setupHelpListeners() {
@@ -120,19 +131,21 @@ class SecureProxy {
     
     async handleBrowse() {
         const urlInput = document.getElementById('urlInput');
-        const url = urlInput.value.trim();
+        let url = urlInput.value.trim();
         
         if (!url) {
             this.showAlert('Please enter a URL', 'warning');
             return;
         }
         
-        if (!this.isValidURL(url)) {
-            this.showAlert('Please enter a valid URL', 'error');
-            return;
+        // Add https:// if no protocol specified
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
+            urlInput.value = url;
         }
         
         this.showLoadingState(true);
+        this.updateConnectionStatus('connecting');
         
         try {
             // Connect to backend proxy server
@@ -147,12 +160,13 @@ class SecureProxy {
                 
                 // Update UI
                 this.updateConnectionStatus('connected');
-                this.showAlert('Connected successfully! Your browsing is now secure.', 'success');
+                this.showAlert('Connected successfully! Browsing through secure proxy.', 'success');
             } else {
                 throw new Error(proxyResponse.error || 'Proxy connection failed');
             }
             
         } catch (error) {
+            console.error('Browse error:', error);
             this.showAlert(`Connection failed: ${error.message}`, 'error');
             this.updateConnectionStatus('disconnected');
         } finally {
@@ -162,10 +176,11 @@ class SecureProxy {
     
     async connectToProxy(url) {
         try {
-            // Use your Google Cloud IP for the backend
-            const backendUrl = `http://35.196.124.59:3000/proxy?url=${encodeURIComponent(url)}`;
+            console.log('🔗 Connecting to proxy for:', url);
             
-            const response = await fetch(backendUrl, {
+            const proxyUrl = `${this.backendUrl}/proxy?url=${encodeURIComponent(url)}`;
+            
+            const response = await fetch(proxyUrl, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
@@ -174,10 +189,17 @@ class SecureProxy {
             });
             
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                // Try to get error details from response
+                try {
+                    const errorData = await response.json();
+                    throw new Error(errorData.details || errorData.error || `HTTP error! status: ${response.status}`);
+                } catch (e) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
             }
             
             const data = await response.text();
+            console.log('✅ Proxy response received');
             
             return {
                 success: true,
@@ -185,7 +207,7 @@ class SecureProxy {
             };
             
         } catch (error) {
-            console.error('Proxy connection error:', error);
+            console.error('❌ Proxy connection error:', error);
             return {
                 success: false,
                 error: error.message
@@ -194,48 +216,107 @@ class SecureProxy {
     }
     
     displayProxiedContent(content, originalUrl) {
-        // Create a new window or iframe to display the proxied content
-        const newWindow = window.open('', '_blank', 'width=1200,height=800');
+        // Create a new window to display the proxied content
+        const newWindow = window.open('', '_blank', 'width=1200,height=800,menubar=yes,toolbar=yes,location=yes,status=yes,scrollbars=yes');
         
         if (newWindow) {
             newWindow.document.write(`
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>SecureProxy - ${originalUrl}</title>
+                    <title>SecureProxy - ${this.extractDomain(originalUrl)}</title>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
                     <style>
-                        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+                        body { 
+                            margin: 0; 
+                            padding: 0; 
+                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        }
                         .proxy-header { 
-                            background: #1a1d29; 
+                            background: linear-gradient(135deg, #1a1d29 0%, #0a0e1a 100%);
                             color: white; 
-                            padding: 10px; 
+                            padding: 12px 20px;
                             border-bottom: 2px solid #00d4ff;
                             display: flex;
                             align-items: center;
                             justify-content: space-between;
+                            position: sticky;
+                            top: 0;
+                            z-index: 10000;
+                            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
                         }
-                        .proxy-content { 
-                            width: 100%; 
-                            height: calc(100vh - 60px);
-                            border: none;
+                        .proxy-header-left {
+                            display: flex;
+                            align-items: center;
+                            gap: 12px;
+                        }
+                        .proxy-logo {
+                            width: 32px;
+                            height: 32px;
+                            background: linear-gradient(135deg, #00d4ff, #8b5cf6);
+                            border-radius: 6px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            font-weight: bold;
+                            font-size: 18px;
+                        }
+                        .proxy-url {
+                            font-size: 13px;
+                            color: #94a3b8;
+                            font-family: 'Courier New', monospace;
+                            max-width: 500px;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
                         }
                         .security-badge {
                             background: #10b981;
                             color: white;
-                            padding: 4px 12px;
+                            padding: 6px 16px;
                             border-radius: 20px;
                             font-size: 12px;
-                            font-weight: bold;
+                            font-weight: 600;
+                            display: flex;
+                            align-items: center;
+                            gap: 6px;
+                        }
+                        .proxy-content { 
+                            width: 100%; 
+                            min-height: calc(100vh - 56px);
+                        }
+                        .close-btn {
+                            background: rgba(255, 255, 255, 0.1);
+                            border: 1px solid rgba(255, 255, 255, 0.2);
+                            color: white;
+                            padding: 6px 12px;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 12px;
+                            margin-left: 12px;
+                            transition: all 0.2s;
+                        }
+                        .close-btn:hover {
+                            background: rgba(255, 255, 255, 0.2);
                         }
                     </style>
                 </head>
                 <body>
                     <div class="proxy-header">
-                        <div>
-                            <strong>SecureProxy</strong> - ${originalUrl}
+                        <div class="proxy-header-left">
+                            <div class="proxy-logo">🛡️</div>
+                            <div>
+                                <strong style="font-size: 14px;">SecureProxy</strong>
+                                <div class="proxy-url">${originalUrl}</div>
+                            </div>
                         </div>
-                        <div class="security-badge">
-                            🔒 SECURE CONNECTION
+                        <div style="display: flex; align-items: center;">
+                            <div class="security-badge">
+                                <span>🔒</span>
+                                <span>SECURE CONNECTION</span>
+                            </div>
+                            <button class="close-btn" onclick="window.close()">Close</button>
                         </div>
                     </div>
                     <div class="proxy-content">
@@ -244,36 +325,36 @@ class SecureProxy {
                 </body>
                 </html>
             `);
+            newWindow.document.close();
         } else {
-            // Fallback: show in current window
-            document.body.innerHTML = `
-                <div style="background: #0a0e1a; color: white; min-height: 100vh; padding: 20px;">
-                    <div style="background: #1a1d29; padding: 15px; border-bottom: 2px solid #00d4ff; margin-bottom: 20px;">
-                        <strong>SecureProxy</strong> - ${originalUrl}
-                        <span style="background: #10b981; padding: 4px 12px; border-radius: 20px; float: right; font-size: 12px;">
-                            🔒 SECURE CONNECTION
-                        </span>
-                    </div>
-                    <div style="background: white; color: black; padding: 20px; border-radius: 8px;">
-                        ${content}
-                    </div>
-                </div>
-            `;
-        }
-    }
-    
-    async simulateProxyConnection(url) {
-        // Simulate connection delay
-        return new Promise((resolve, reject) => {
+            // Fallback if popup was blocked
+            this.showAlert('Popup blocked! Please allow popups for this site, or the content will be displayed below.', 'warning');
+            
+            // Display in current window as fallback
             setTimeout(() => {
-                // 95% success rate simulation
-                if (Math.random() > 0.05) {
-                    resolve();
-                } else {
-                    reject(new Error('Connection failed'));
-                }
+                document.body.innerHTML = `
+                    <div style="background: #0a0e1a; color: white; min-height: 100vh;">
+                        <div style="background: linear-gradient(135deg, #1a1d29 0%, #0a0e1a 100%); padding: 15px 20px; border-bottom: 2px solid #00d4ff; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong style="font-size: 16px;">🛡️ SecureProxy</strong>
+                                <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">${originalUrl}</div>
+                            </div>
+                            <div style="display: flex; gap: 12px; align-items: center;">
+                                <span style="background: #10b981; padding: 6px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                                    🔒 SECURE CONNECTION
+                                </span>
+                                <button onclick="window.location.href='index.html'" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer;">
+                                    ← Back to SecureProxy
+                                </button>
+                            </div>
+                        </div>
+                        <div style="padding: 20px; background: white; color: black; min-height: calc(100vh - 100px);">
+                            ${content}
+                        </div>
+                    </div>
+                `;
             }, 2000);
-        });
+        }
     }
     
     handleQuickAccess(siteName) {
@@ -408,13 +489,6 @@ class SecureProxy {
         if (this.sessionHistory.length > 10) {
             this.sessionHistory = this.sessionHistory.slice(0, 10);
         }
-        
-        this.updateHistoryDisplay();
-    }
-    
-    updateHistoryDisplay() {
-        // This would update the history section in the UI
-        // Implementation would depend on the specific history component
     }
     
     extractDomain(url) {
@@ -422,15 +496,6 @@ class SecureProxy {
             return new URL(url).hostname.replace('www.', '');
         } catch {
             return url;
-        }
-    }
-    
-    isValidURL(string) {
-        try {
-            new URL(string);
-            return true;
-        } catch (_) {
-            return false;
         }
     }
     
@@ -638,8 +703,8 @@ class SecureProxy {
     }
     
     initializeAnimations() {
-        // Initialize background particle system
-        this.initializeBackgroundEffects();
+        // Initialize background effects
+        this.createCanvasBackground();
         
         // Animate elements on page load
         if (typeof anime !== 'undefined') {
@@ -662,116 +727,12 @@ class SecureProxy {
                 delay: anime.stagger(100),
                 easing: 'easeOutExpo'
             });
-            
-            // Floating animation for server locations
-            anime({
-                targets: '.server-location',
-                translateY: [-5, 5],
-                duration: 2000,
-                direction: 'alternate',
-                loop: true,
-                easing: 'easeInOutSine',
-                delay: anime.stagger(200)
-            });
-            
-            // Pulse animation for status indicators
-            anime({
-                targets: '.status-connected',
-                scale: [1, 1.2, 1],
-                duration: 2000,
-                loop: true,
-                easing: 'easeInOutSine'
-            });
-            
-            // Gradient text animation
-            anime({
-                targets: '.gradient-text',
-                opacity: [0.7, 1, 0.7],
-                duration: 3000,
-                loop: true,
-                easing: 'easeInOutSine'
-            });
-        }
-    }
-    
-    initializeBackgroundEffects() {
-        // Initialize PIXI.js background particle system
-        if (typeof PIXI !== 'undefined') {
-            this.createParticleBackground();
-        }
-        
-        // Initialize canvas background effects
-        this.createCanvasBackground();
-    }
-    
-    createParticleBackground() {
-        const canvas = document.getElementById('background-canvas');
-        if (!canvas) return;
-        
-        try {
-            const app = new PIXI.Application({
-                view: canvas,
-                width: window.innerWidth,
-                height: window.innerHeight,
-                backgroundColor: 0x0a0e1a,
-                transparent: true,
-                antialias: true
-            });
-            
-            // Create particle container
-            const particleContainer = new PIXI.Container();
-            app.stage.addChild(particleContainer);
-            
-            // Create particles
-            const particles = [];
-            const particleCount = 50;
-            
-            for (let i = 0; i < particleCount; i++) {
-                const particle = new PIXI.Graphics();
-                particle.beginFill(0x00d4ff, 0.3);
-                particle.drawCircle(0, 0, Math.random() * 2 + 1);
-                particle.endFill();
-                
-                particle.x = Math.random() * app.screen.width;
-                particle.y = Math.random() * app.screen.height;
-                particle.vx = (Math.random() - 0.5) * 0.5;
-                particle.vy = (Math.random() - 0.5) * 0.5;
-                particle.alpha = Math.random() * 0.5 + 0.3;
-                
-                particles.push(particle);
-                particleContainer.addChild(particle);
-            }
-            
-            // Animate particles
-            app.ticker.add(() => {
-                particles.forEach(particle => {
-                    particle.x += particle.vx;
-                    particle.y += particle.vy;
-                    
-                    // Wrap around screen
-                    if (particle.x < 0) particle.x = app.screen.width;
-                    if (particle.x > app.screen.width) particle.x = 0;
-                    if (particle.y < 0) particle.y = app.screen.height;
-                    if (particle.y > app.screen.height) particle.y = 0;
-                    
-                    // Pulse effect
-                    particle.alpha = 0.3 + Math.sin(Date.now() * 0.001 + particle.x * 0.01) * 0.3;
-                });
-            });
-            
-            // Handle resize
-            window.addEventListener('resize', () => {
-                app.renderer.resize(window.innerWidth, window.innerHeight);
-            });
-            
-        } catch (error) {
-            console.log('PIXI.js not available, falling back to canvas effects');
         }
     }
     
     createCanvasBackground() {
         const canvas = document.getElementById('background-canvas');
-        if (!canvas || typeof PIXI !== 'undefined') return;
+        if (!canvas) return;
         
         const ctx = canvas.getContext('2d');
         canvas.width = window.innerWidth;
@@ -816,24 +777,6 @@ class SecureProxy {
                 particle.opacity = 0.2 + Math.sin(Date.now() * 0.001 + particle.x * 0.01) * 0.3;
             });
             
-            // Draw connections between nearby particles
-            for (let i = 0; i < particles.length; i++) {
-                for (let j = i + 1; j < particles.length; j++) {
-                    const dx = particles[i].x - particles[j].x;
-                    const dy = particles[i].y - particles[j].y;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-                    
-                    if (distance < 100) {
-                        ctx.beginPath();
-                        ctx.moveTo(particles[i].x, particles[i].y);
-                        ctx.lineTo(particles[j].x, particles[j].y);
-                        ctx.strokeStyle = `rgba(0, 212, 255, ${0.1 * (1 - distance / 100)})`;
-                        ctx.lineWidth = 1;
-                        ctx.stroke();
-                    }
-                }
-            }
-            
             requestAnimationFrame(animate);
         }
         
@@ -875,7 +818,7 @@ class SecureProxy {
             }
         });
         
-        // Update privacy level
+        // Update privacy score
         this.updatePrivacyScore();
     }
     

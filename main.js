@@ -16,8 +16,15 @@ class SecureProxy {
         this.connectionChart = null;
         this.privacyChart = null;
         
-        // Backend URL - update this if your server IP changes
-        this.backendUrl = 'http://35.196.124.59:3000';
+        // Backend URL - auto-detect if on Vercel, otherwise use Google Cloud backend
+        // On Vercel, use relative URLs. Otherwise use the Google Cloud backend
+        if (window.location.hostname.includes('vercel.app') || window.location.hostname.includes('vercel.com')) {
+            // On Vercel - use relative API paths
+            this.backendUrl = window.location.origin;
+        } else {
+            // Local development or Google Cloud - use specific backend
+            this.backendUrl = 'http://35.196.124.59:3000';
+        }
         
         this.init();
     }
@@ -34,13 +41,17 @@ class SecureProxy {
     
     async checkBackendHealth() {
         try {
-            const response = await fetch(`${this.backendUrl}/health`);
+            const healthUrl = this.backendUrl === window.location.origin 
+                ? `${this.backendUrl}/api/health` 
+                : `${this.backendUrl}/health`;
+            const response = await fetch(healthUrl);
             const data = await response.json();
             console.log('✅ Backend is healthy:', data);
             this.updateConnectionStatus('connected');
         } catch (error) {
             console.error('❌ Backend health check failed:', error);
-            this.showAlert('Warning: Cannot connect to proxy server. Please check if the backend is running.', 'warning');
+            const errorMsg = `Cannot connect to proxy server at ${this.backendUrl}. Please verify the backend is running and accessible.`;
+            this.showAlert(errorMsg, 'warning');
             this.updateConnectionStatus('disconnected');
         }
     }
@@ -144,30 +155,43 @@ class SecureProxy {
             urlInput.value = url;
         }
         
+        // Basic URL validation - check if it looks like a valid URL
+        try {
+            new URL(url);
+        } catch (e) {
+            this.showAlert('Please enter a valid URL (e.g., example.com or https://example.com)', 'warning');
+            return;
+        }
+        
         this.showLoadingState(true);
         this.updateConnectionStatus('connecting');
         
         try {
-            // Connect to backend proxy server
-            const proxyResponse = await this.connectToProxy(url);
+            // First verify backend is accessible
+            await this.checkBackendHealth();
             
-            if (proxyResponse.success) {
-                // Display the proxied content
-                this.displayProxiedContent(proxyResponse.data, url);
-                
-                // Add to session history
-                this.addToHistory(url);
-                
-                // Update UI
-                this.updateConnectionStatus('connected');
-                this.showAlert('Connected successfully! Browsing through secure proxy.', 'success');
-            } else {
-                throw new Error(proxyResponse.error || 'Proxy connection failed');
-            }
+            // Display the proxied content using iframe
+            this.displayProxiedContent(null, url);
+            
+            // Add to session history
+            this.addToHistory(url);
+            
+            // Update UI
+            this.updateConnectionStatus('connected');
+            this.showAlert('Connected successfully! Browsing through secure proxy.', 'success');
             
         } catch (error) {
             console.error('Browse error:', error);
-            this.showAlert(`Connection failed: ${error.message}`, 'error');
+            let errorMessage = `Connection failed: ${error.message}`;
+            
+            // Provide more helpful error messages
+            if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                errorMessage = `Cannot reach proxy server at ${this.backendUrl}. Please check if the backend is running and accessible.`;
+            } else if (error.message.includes('CORS')) {
+                errorMessage = 'CORS error: The backend may not be configured correctly. Please check CORS settings.';
+            }
+            
+            this.showAlert(errorMessage, 'error');
             this.updateConnectionStatus('disconnected');
         } finally {
             this.showLoadingState(false);
@@ -216,7 +240,11 @@ class SecureProxy {
     }
     
     displayProxiedContent(content, originalUrl) {
-        // Create a new window to display the proxied content
+        // Use iframe approach for better resource handling
+        const proxyPath = this.backendUrl === window.location.origin ? '/api/proxy' : '/proxy';
+        const proxyUrl = `${this.backendUrl}${proxyPath}?url=${encodeURIComponent(originalUrl)}`;
+        
+        // Create a new window with iframe
         const newWindow = window.open('', '_blank', 'width=1200,height=800,menubar=yes,toolbar=yes,location=yes,status=yes,scrollbars=yes');
         
         if (newWindow) {
@@ -228,10 +256,16 @@ class SecureProxy {
                     <meta charset="UTF-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
                     <style>
+                        * { 
+                            margin: 0; 
+                            padding: 0; 
+                            box-sizing: border-box;
+                        }
                         body { 
                             margin: 0; 
                             padding: 0; 
                             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                            overflow: hidden;
                         }
                         .proxy-header { 
                             background: linear-gradient(135deg, #1a1d29 0%, #0a0e1a 100%);
@@ -241,8 +275,10 @@ class SecureProxy {
                             display: flex;
                             align-items: center;
                             justify-content: space-between;
-                            position: sticky;
+                            position: fixed;
                             top: 0;
+                            left: 0;
+                            right: 0;
                             z-index: 10000;
                             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
                         }
@@ -282,9 +318,11 @@ class SecureProxy {
                             align-items: center;
                             gap: 6px;
                         }
-                        .proxy-content { 
-                            width: 100%; 
-                            min-height: calc(100vh - 56px);
+                        .proxy-iframe {
+                            width: 100%;
+                            height: 100vh;
+                            border: none;
+                            margin-top: 56px;
                         }
                         .close-btn {
                             background: rgba(255, 255, 255, 0.1);
@@ -299,6 +337,14 @@ class SecureProxy {
                         }
                         .close-btn:hover {
                             background: rgba(255, 255, 255, 0.2);
+                        }
+                        .loading {
+                            position: fixed;
+                            top: 50%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            color: #00d4ff;
+                            font-size: 18px;
                         }
                     </style>
                 </head>
@@ -319,22 +365,26 @@ class SecureProxy {
                             <button class="close-btn" onclick="window.close()">Close</button>
                         </div>
                     </div>
-                    <div class="proxy-content">
-                        ${content}
-                    </div>
+                    <div class="loading">Loading secure content...</div>
+                    <iframe 
+                        id="proxyFrame"
+                        class="proxy-iframe" 
+                        src="${proxyUrl}"
+                        onload="document.querySelector('.loading').style.display='none'"
+                        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation allow-navigation"
+                    ></iframe>
                 </body>
                 </html>
             `);
             newWindow.document.close();
         } else {
-            // Fallback if popup was blocked
-            this.showAlert('Popup blocked! Please allow popups for this site, or the content will be displayed below.', 'warning');
+            // Fallback: display in current window
+            this.showAlert('Popup blocked! Displaying content in current window.', 'warning');
             
-            // Display in current window as fallback
             setTimeout(() => {
                 document.body.innerHTML = `
-                    <div style="background: #0a0e1a; color: white; min-height: 100vh;">
-                        <div style="background: linear-gradient(135deg, #1a1d29 0%, #0a0e1a 100%); padding: 15px 20px; border-bottom: 2px solid #00d4ff; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+                    <div style="background: #0a0e1a; color: white; min-height: 100vh; position: relative;">
+                        <div style="background: linear-gradient(135deg, #1a1d29 0%, #0a0e1a 100%); padding: 15px 20px; border-bottom: 2px solid #00d4ff; position: fixed; top: 0; left: 0; right: 0; z-index: 10000; display: flex; justify-content: space-between; align-items: center;">
                             <div>
                                 <strong style="font-size: 16px;">🛡️ SecureProxy</strong>
                                 <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">${originalUrl}</div>
@@ -348,12 +398,15 @@ class SecureProxy {
                                 </button>
                             </div>
                         </div>
-                        <div style="padding: 20px; background: white; color: black; min-height: calc(100vh - 100px);">
-                            ${content}
-                        </div>
+                        <iframe 
+                            id="proxyFrame"
+                            src="${proxyUrl}"
+                            style="width: 100%; height: 100vh; border: none; margin-top: 70px;"
+                            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation allow-navigation"
+                        ></iframe>
                     </div>
                 `;
-            }, 2000);
+            }, 1000);
         }
     }
     

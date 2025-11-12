@@ -1,0 +1,25 @@
+{
+  "name": "secureproxy",
+  "version": "2.0.0",
+  "description": "SecureProxy - Anonymous Web Browser with IP masking",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'No build step required'"
+  },
+  "keywords": [
+    "proxy",
+    "privacy",
+    "security",
+    "anonymous",
+    "browser"
+  ],
+  "author": "SecureProxy Team",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
